@@ -83,6 +83,8 @@ class IRIField(Field):
                 return value.__uri__
             else:
                 return URIRef(value)
+        elif isinstance(value, Model):
+            return value.__uri__
         else:
             # TODO: Improve error message.
             if not isinstance(value, list):
