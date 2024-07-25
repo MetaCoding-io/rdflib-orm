@@ -27,6 +27,6 @@ setuptools.setup(
     python_requires='>=3.6',
     install_requires=[
         'rdflib>=6.0.0',
-        'requests==2.25.1',
+        'requests>=2.25.1',
     ],
 )
