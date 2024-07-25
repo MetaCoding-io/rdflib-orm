@@ -130,7 +130,8 @@ WHERE {{
             # Attribute and values to use to create an instance of self.model.
             to_be_instance_values = dict()
 
-            for s, p, o in db.read((None, None, None)):
+            # for s, p, o in g.read((None, None, None)):
+            for s, p, o in g:
                 for model_attr in model_attributes:
                     if model_attr[1].predicate == p:
                         if model_attr[0] not in to_be_instance_values:
