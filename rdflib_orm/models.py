@@ -199,7 +199,7 @@ WHERE {{
 
             # Check and see if the to_be_instance_values dict
             # matches the values supplied in the filter kwargs.
-            is_match = False
+            # is_match = False
 
             # Not required anymore since we fetch via URI of instance.
             # for k in kwargs:
@@ -453,6 +453,7 @@ class Model(metaclass=ModelBase):
                 self.__uri__ = URIRef(uri)
 
         self.__attributes__ = self.get_model_attributes(self)
+        self.__changed_attributes__ = set()
 
         # try:
         for attribute_name, attribute_field in self.__attributes__:
@@ -473,6 +474,11 @@ class Model(metaclass=ModelBase):
         #     logger.error(traceback.print_exc())
         #     logger.error(str(e))
         #     raise Exception(f'Failed creating {cls} instance with identifier {self.__uri__}')
+
+    def __setattr__(self, name, value):
+        if name in self.__dict__.get('__attributes__', []):
+            self.__changed_attributes__.add(name)
+        super().__setattr__(name, value)
 
     def serialize(self, format='turtle'):
         uri = self.__uri__
@@ -501,54 +507,27 @@ class Model(metaclass=ModelBase):
         return g.serialize(format=format).decode('utf-8')
 
     def save(self, db_key: str = 'default'):
-        # g = Database.g
         uri = self.__uri__
         cls = self.__class__
         db = Database.get_db(db_key)
 
-        # Store current state in a temp graph for naive   transactional rollback functionality.
-        previous_state = Graph()
-        for _, p, o in db.read((uri, None, None)):
-            previous_state.add((uri, p, o))
-
-        # for s, p, _ in Database.read((None, None, uri)):
-        #     previous_state.add((s, p, uri))
-
-        def delete_current_triples(uri: URIRef):
-            g = Database.get_db(db_key)
-            if g.is_sparql_store:
-                # TODO: Use SPARQL query only if it's a SPARQL store, otherwise use Database.read.
-                query = f"""
-                    DELETE {{
-                        GRAPH <{db.g.identifier}> {{
-                            <{uri}> ?p ?o .
-                        }}
-                    }}
-                    WHERE {{
-                        GRAPH <{db.g.identifier}> {{
-                            <{uri}> ?p ?o .
-                        }}
-                    }}
-                """
-                db.sparql_update(query)
-            else:
-                # Inefficient - the RDFLib SPARQLUpdateStore sends each triple as a HTTP request.
-                for _, p, o in g.read((uri, None, None)):
-                    g.delete((uri, p, o))
-                for s, p, _ in g.read((None, None, uri)):
-                    g.delete((s, p, uri))
-
-        delete_current_triples(uri)
-
         try:
-            for attribute_name, attribute_field in self.__attributes__:
+            for attribute_name in self.__changed_attributes__:
+                attribute_field = dict(self.__attributes__)[attribute_name]
                 predicate = attribute_field.predicate
                 inverse = getattr(attribute_field, 'inverse', None)
                 value = getattr(self, attribute_name)
 
                 attribute_field.validate(value, cls, attribute_name)
-                converted_value = attribute_field.convert(value)
+                converted_value = attribute_field.convert(value, create_mode=False)
 
+                # Remove existing triples for this predicate
+                for _, _, o in db.read((uri, predicate, None)):
+                    db.delete((uri, predicate, o))
+                    if inverse is not None:
+                        db.delete((o, inverse, uri))
+
+                # Add new triples
                 if converted_value is not None:
                     if isinstance(converted_value, list):
                         for item in converted_value:
@@ -559,28 +538,15 @@ class Model(metaclass=ModelBase):
                         db.write((uri, predicate, converted_value))
                         if inverse is not None:
                             db.write((converted_value, inverse, uri))
+
+            # Clear the changed attributes set
+            self.__changed_attributes__.clear()
+
         except Exception as e:
-            # Something bad happened, rollback.
-            # logger.error(traceback.print_exc())
-            # logger.error(str(e))
-
-            # Delete the current transaction.
-            logger.info('Rolling back transaction')
-            logger.info('Deleting current transaction')
-            delete_current_triples(uri)
-
-            # Rollback.
-            logger.info('Restoring previous state')
-            # SPARQLUpdateStore does not understand the overloaded += operator.
-            # Database.g += previous_state
-            # Manually restore by calling the Database.write() function.
-            for s, p, o in previous_state.triples((None, None, None)):
-                db.write((s, p, o))
-
-            logger.info('Transaction rollback complete')
-
+            # If an error occurs, log it and re-raise
+            logger.error(f"Error occurred while saving {cls} instance with URI {uri}")
+            logger.error(traceback.format_exc())
             raise e
-
 
 # Avoid circular imports by importing fields after the model-related classes have been initialised.
 from rdflib_orm.fields import *
