@@ -3,7 +3,7 @@ import logging
 import traceback
 from typing import List, Type
 
-from rdflib import Graph, URIRef, BNode
+from rdflib import Graph, URIRef, BNode, Literal
 
 from rdflib_orm.db import Database
 
@@ -241,7 +241,7 @@ WHERE {{
                 else:
                     is_uri = False
                 literal_o = f'"{o}"'
-                datatype = f'<{o.datatype}>' if type(o) == Literal else None
+                datatype = f'<{o.datatype}>' if (type(o) == Literal and o.datatype is not None) else None
                 uri_o = self._get_sparql_query_uri_lists(o)
                 if datatype:
                     literal_o = f'{literal_o}^^{datatype}'
@@ -439,6 +439,16 @@ class Model(metaclass=ModelBase):
             )
         )
 
+    def __json__(self):
+        return {
+            'uri': self.__uri__,
+            'attributes': {
+                attribute_name: getattr(self, attribute_name)
+                for attribute_name, _ in self.__attributes__
+            }
+        }
+            
+            
     def __init__(self, uri: str, db_key: str = 'default', **kwargs):
         cls = self.__class__
         db = Database.get_db(db_key)
@@ -504,7 +514,7 @@ class Model(metaclass=ModelBase):
                     g.add((uri, predicate, converted_value))
                     if inverse is not None:
                         g.add((converted_value, inverse, uri))
-        return g.serialize(format=format).decode('utf-8')
+        return g.serialize(format=format)#.decode('utf-8')
 
     def save(self, db_key: str = 'default'):
         uri = self.__uri__

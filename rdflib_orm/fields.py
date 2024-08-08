@@ -65,6 +65,43 @@ class CharField(Field):
             return str(value) if value is not None else None
 
 
+class StringField(Field):
+    # TODO: Add many field.
+    def __init__(self, predicate: URIRef, value: str = None, max_length: int = None, required: bool = False, many: bool = False):
+        self.predicate = predicate
+        self.max_length = max_length
+        self.value = value
+        self.required = required
+        self.many = many
+
+    def validate(self, value: str, cls: str, field: str):
+        super(StringField, self).validate(value, cls, field)
+        if self.max_length is not None and value is not None:
+            length = len(value)
+            if length >= self.max_length:
+                raise FieldError(f'{cls} exceeds max_length ({self.max_length}) on field {field} ({length}).')
+
+    def convert(self, value, **kwargs):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            if self.many is True:
+                raise FieldError(f'Expected a list but got {type(value)} "{value}" instead.')
+            return Literal(value, datatype=XSD.string)
+        else:
+            # TODO: Improve error message.
+            if not isinstance(value, list):
+                raise FieldError(f'Expected a list.')
+            return [Literal(item, datatype=XSD.string) for item in value]
+
+    def convert_to_python(self, value):
+        if self.many:
+            return [str(value)]
+        else:
+            return str(value) if value is not None else None
+
+
+
 class IRIField(Field):
     def __init__(self, predicate: URIRef, value: Union[URIRef, str, 'Model', List[Union[URIRef, str, 'Model']]] = None, inverse: URIRef = None, required: bool = False, many: bool = False):
         self.predicate = predicate
@@ -144,7 +181,7 @@ class BooleanField(Field):
         self.required = required
 
     def convert(self, value, **kwargs):
-        return Literal(value) if value is not None else None
+        return Literal(value, datatype=XSD.boolean) if value is not None else None
 
     def convert_to_python(self, value):
         if str(value) == 'false':
@@ -162,11 +199,22 @@ class IntegerField(Field):
         self.required = required
 
     def convert(self, value, **kwargs):
-        return Literal(value) if value is not None else None
+        return Literal(value, datatype=XSD.integer) if value is not None else None
 
     def convert_to_python(self, value):
         return int(value)
 
+class FloatField(Field):
+    def __init__(self, predicate: URIRef, value: int = None, required: bool = False):
+        self.predicate = predicate
+        self.value = value
+        self.required = required
+
+    def convert(self, value, **kwargs):
+        return Literal(value, datatype=XSD.float) if value is not None else None
+
+    def convert_to_python(self, value):
+        return float(value)
 
 class RelationshipField(IRIField):
     def __init__(self, to: Type['Model'], predicate: URIRef, required: bool = False, many: bool = False):
