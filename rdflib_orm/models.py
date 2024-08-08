@@ -97,7 +97,7 @@ class Query:
                 predicate = f'<{field.predicate}>'
                 o = field.convert(val, create_mode=False)
                 literal_o = f'"{o}"'
-                datatype = f'<{o.datatype}>' if type(o) == Literal else None
+                datatype = f'<{o.datatype}>' if type(o) == Literal and o.datatype is not None else None
                 uri_o = f'<{o}>'
                 if datatype:
                     literal_o = f'{literal_o}^^{datatype}'
