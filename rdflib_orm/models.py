@@ -1,7 +1,7 @@
 import inspect
 import logging
 import traceback
-from typing import List, Type
+from typing import List, Type, Optional
 
 from rdflib import Graph, URIRef, BNode, Literal
 
@@ -9,9 +9,16 @@ from rdflib_orm.db import Database
 
 logger = logging.getLogger(__name__)
 
+class MultipleInstanceFoundError(Exception):
+    """Exception called when retrieve queries return multiple matching values."""
+    pass
 
 class InstanceNotFoundError(Exception):
     """Exception called when retrieve queries return no matching values."""
+    pass
+
+class InstanceAlreadyExistsError(Exception):
+    """Exception called when create queries is for URI that already exists."""
     pass
 
 
@@ -30,6 +37,16 @@ class QuerySet(set):
         queryset = list(self)
         queryset.sort(key=lambda x: getattr(x, value))
         return queryset
+    
+    def one(self):
+        if len(self) == 0: 
+            return None
+        elif len(self) == 1:
+            return list(self)[0]
+        elif len(self) > 1:
+            raise MultipleInstanceFoundError(f"Multiple instances found")
+        # else:
+        #     raise InstanceNotFoundError(f'No instances found')
 
 
 class Query:
@@ -62,7 +79,7 @@ class Query:
         else:
             return f'<{uri_list}>'
 
-    def create(self, uri: str, db_key: str = 'default', **kwargs):
+    def create(self, uri: Optional[str] = None, db_key: str = 'default', **kwargs):
         """Create and save an object in a single step.
 
         Otherwise, this is equivalent to instantiating
@@ -70,8 +87,13 @@ class Query:
         """
         # TODO: Raise error if URI already exists? Or maybe a warning?
         instance = self.model_class(uri, **kwargs)
-        instance.save(db_key=db_key)
-        return instance
+        
+        try:
+            self.get(instance.__uri__, db_key=db_key)
+            raise InstanceAlreadyExistsError(f'Instance with URI {uri} already exists.')
+        except InstanceNotFoundError:
+            instance.save(db_key=db_key)
+            return instance
 
     def get(self, uri: str, db_key: str = 'default', **kwargs) -> 'Model':
         # TODO: Basically this was a copy paste from the filter function. See if there's a better way to structure
@@ -434,7 +456,7 @@ class Model(metaclass=ModelBase):
                     # Filter out methods.
                     and not inspect.ismethod(tuple_item[1])
                     # Filter out ORM reserved attributes.
-                    and tuple_item[0] not in ('objects', 'get_model_attributes', 'save', 'Meta', 'serialize'),
+                    and tuple_item[0] not in ('objects', 'get_model_attributes', 'save', 'delete', 'Meta', 'serialize'),
                 inspect.getmembers(cls)
             )
         )
@@ -449,13 +471,16 @@ class Model(metaclass=ModelBase):
         }
             
             
-    def __init__(self, uri: str, db_key: str = 'default', **kwargs):
+    def __init__(self, uri: Optional[str], db_key: str = 'default', **kwargs):
         cls = self.__class__
         db = Database.get_db(db_key)
         # self.__objects__ = Query(cls)  # I don't think this is used anywhere?
 
         if not uri:
-            raise Exception(f'{cls} instance uri is an empty string.')
+            if getattr(self, '__mint__', None) is not None:
+                self.__uri__ = URIRef(self.__mint__(**kwargs))
+            else:
+                raise Exception(f'{cls} instance uri is an empty string.')
         else:
             if not uri.startswith('http'):
                 self.__uri__ = URIRef(db.base_uri + uri)
@@ -486,7 +511,7 @@ class Model(metaclass=ModelBase):
         #     raise Exception(f'Failed creating {cls} instance with identifier {self.__uri__}')
 
     def __setattr__(self, name, value):
-        if name in self.__dict__.get('__attributes__', []):
+        if name in [x[0] for x in self.__dict__.get('__attributes__', [])]:
             self.__changed_attributes__.add(name)
         super().__setattr__(name, value)
 
@@ -515,6 +540,12 @@ class Model(metaclass=ModelBase):
                     if inverse is not None:
                         g.add((converted_value, inverse, uri))
         return g.serialize(format=format)#.decode('utf-8')
+
+    def delete(self, db_key: str = 'default'):
+        uri = self.__uri__
+        db = Database.get_db(db_key)
+        for s, p, o in db.read((uri, None, None)):
+            db.delete((s, p, o))
 
     def save(self, db_key: str = 'default'):
         uri = self.__uri__
