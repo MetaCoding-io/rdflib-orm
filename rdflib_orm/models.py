@@ -92,7 +92,7 @@ class Query:
         # We instantiate first to allow custom uri minting by model class
         db = Database.get_db(db_key)
         if (instance.__uri__, None, None) in db.g:
-            raise InstanceAlreadyExistsError(f'Instance with URI {uri} already exists.')
+            raise InstanceAlreadyExistsError(f'Instance with URI {instance.__uri__} already exists.')
         else:
             instance.save(db_key=db_key)
             return instance
