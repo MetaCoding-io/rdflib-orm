@@ -85,13 +85,15 @@ class Query:
         Otherwise, this is equivalent to instantiating
         a new `model` and calling `model.save()`.
         """
-        # TODO: Raise error if URI already exists? Or maybe a warning?
-        instance = self.model_class(uri, **kwargs)
         
-        try:
-            self.get(instance.__uri__, db_key=db_key)
+        instance = self.model_class(uri, db_key=db_key, **kwargs)
+        
+        # Raise error if URI already exists? Or maybe a warning
+        # We instantiate first to allow custom uri minting by model class
+        db = Database.get_db(db_key)
+        if (instance.__uri__, None, None) in db.g:
             raise InstanceAlreadyExistsError(f'Instance with URI {uri} already exists.')
-        except InstanceNotFoundError:
+        else:
             instance.save(db_key=db_key)
             return instance
 
@@ -544,9 +546,15 @@ class Model(metaclass=ModelBase):
     def delete(self, db_key: str = 'default'):
         uri = self.__uri__
         db = Database.get_db(db_key)
-        for s, p, o in db.read((uri, None, None)):
-            db.delete((s, p, o))
-
+        try:
+            for s, p, o in db.read((uri, None, None)):
+                db.delete((s, p, o))
+        except Exception as e:
+            # If an error occurs, log it and re-raise
+            logger.error(f"Error occurred while deleting {cls} instance with URI {uri}")
+            logger.error(traceback.format_exc())
+            raise e
+        
     def save(self, db_key: str = 'default'):
         uri = self.__uri__
         cls = self.__class__
