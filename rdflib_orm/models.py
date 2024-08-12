@@ -90,7 +90,7 @@ class Query:
         
         try:
             self.get(instance.__uri__, db_key=db_key)
-            raise InstanceAlreadyExistsError(f'Instance with URI {uri} already exists.')
+            raise InstanceAlreadyExistsError(f'Instance with URI {instance.__uri__} already exists.')
         except InstanceNotFoundError:
             instance.save(db_key=db_key)
             return instance
