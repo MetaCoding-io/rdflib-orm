@@ -86,7 +86,7 @@ class Query:
         a new `model` and calling `model.save()`.
         """
         
-        instance = self.model_class(uri, db_key=db_key, **kwargs)
+        instance = self.model_class(uri, db_key=db_key, create_mode=True, **kwargs)
         
         # Raise error if URI already exists? Or maybe a warning
         # We instantiate first to allow custom uri minting by model class
@@ -181,7 +181,7 @@ WHERE {{
                                                                         model_attr[1].convert_to_python(o)]
                         continue
             if to_be_instance_values:
-                return self.model_class(uri, **to_be_instance_values)
+                return self.model_class(uri, create_mode=False, **to_be_instance_values)
             else:
                 raise InstanceNotFoundError(f'No instance found with URI {uri}')
         else:
@@ -240,7 +240,7 @@ WHERE {{
             #             break
 
             if to_be_instance_values:
-                return self.model_class(uri, **to_be_instance_values)
+                return self.model_class(uri, create_mode=False, **to_be_instance_values)
             else:
                 raise InstanceNotFoundError(f'No instance found with URI {uri}')
 
@@ -336,7 +336,7 @@ WHERE {{
                                     to_be_instance_values[model_attr[0]] = [to_be_instance_values[model_attr[0]],
                                                                             model_attr[1].convert_to_python(o)]
                             continue
-                queryset.add(self.model_class(instance_uri, **to_be_instance_values))
+                queryset.add(self.model_class(instance_uri, create_mode=False, **to_be_instance_values))
         else:
             for key, val in kwargs.items():
                 filtered_attr: 'Field' = getattr(self.model_class, key)
@@ -398,7 +398,7 @@ WHERE {{
 
                         if is_match:
                             # Create the instance and add it to the queryset.
-                            queryset.add(self.model_class(instance_uri, **to_be_instance_values))
+                            queryset.add(self.model_class(instance_uri, create_mode=False, **to_be_instance_values))
 
         return queryset
 
@@ -473,10 +473,12 @@ class Model(metaclass=ModelBase):
         }
             
             
-    def __init__(self, uri: Optional[str], db_key: str = 'default', **kwargs):
+    def __init__(self, uri: Optional[str], db_key: str = 'default', create_mode: bool = True, **kwargs):
         cls = self.__class__
         db = Database.get_db(db_key)
         # self.__objects__ = Query(cls)  # I don't think this is used anywhere?
+
+        self.__changed_attributes__ = set()
 
         if not uri:
             if getattr(self, '__mint__', None) is not None:
@@ -490,8 +492,7 @@ class Model(metaclass=ModelBase):
                 self.__uri__ = URIRef(uri)
 
         self.__attributes__ = self.get_model_attributes(self)
-        self.__changed_attributes__ = set()
-
+        
         # try:
         for attribute_name, attribute_field in self.__attributes__:
             if kwargs.get(attribute_name) is not None:
@@ -511,6 +512,10 @@ class Model(metaclass=ModelBase):
         #     logger.error(traceback.print_exc())
         #     logger.error(str(e))
         #     raise Exception(f'Failed creating {cls} instance with identifier {self.__uri__}')
+
+        # If we're not in create mode, we're in update mode, so we need to track changes.
+        if not create_mode:
+            self.__changed_attributes__ = set()
 
     def __setattr__(self, name, value):
         if name in [x[0] for x in self.__dict__.get('__attributes__', [])]:
