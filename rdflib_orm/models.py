@@ -79,6 +79,30 @@ class Query:
         else:
             return f'<{uri_list}>'
 
+    def exists(self, uri: str, db_key: str = 'default') -> bool:
+        db = Database.get_db(db_key)
+        
+        if not isinstance(uri, BNode):
+            uri = URIRef(uri)
+        
+        class_type = self.model_class.class_type.value
+        class_type_str = self._get_sparql_query_uri_lists(class_type)
+            
+        if db.is_sparql_store:
+            query = f"""
+ASK WHERE {{
+    GRAPH <{db.g.identifier}> {{
+        <{uri}> ?p ?o ;
+        rdf:type {class_type_str} .
+    }}
+}}
+            """
+            logger.info(query)
+            query_result = db.sparql(query)
+            return query_result.askAnswer
+        else:
+            return (uri, None, None) in db.g
+
     def create(self, uri: Optional[str] = None, db_key: str = 'default', **kwargs):
         """Create and save an object in a single step.
 
