@@ -109,13 +109,15 @@ ASK WHERE {{
         Otherwise, this is equivalent to instantiating
         a new `model` and calling `model.save()`.
         """
-        # TODO: Raise error if URI already exists? Or maybe a warning?
-        instance = self.model_class(uri, **kwargs)
         
-        try:
-            self.get(instance.__uri__, db_key=db_key)
+        instance = self.model_class(uri, db_key=db_key, create_mode=True, **kwargs)
+        
+        # Raise error if URI already exists? Or maybe a warning
+        # We instantiate first to allow custom uri minting by model class
+        db = Database.get_db(db_key)
+        if (instance.__uri__, None, None) in db.g:
             raise InstanceAlreadyExistsError(f'Instance with URI {instance.__uri__} already exists.')
-        except InstanceNotFoundError:
+        else:
             instance.save(db_key=db_key)
             return instance
 
@@ -203,7 +205,7 @@ WHERE {{
                                                                         model_attr[1].convert_to_python(o)]
                         continue
             if to_be_instance_values:
-                return self.model_class(uri, **to_be_instance_values)
+                return self.model_class(uri, create_mode=False, **to_be_instance_values)
             else:
                 raise InstanceNotFoundError(f'No instance found with URI {uri}')
         else:
@@ -262,7 +264,7 @@ WHERE {{
             #             break
 
             if to_be_instance_values:
-                return self.model_class(uri, **to_be_instance_values)
+                return self.model_class(uri, create_mode=False, **to_be_instance_values)
             else:
                 raise InstanceNotFoundError(f'No instance found with URI {uri}')
 
@@ -358,7 +360,7 @@ WHERE {{
                                     to_be_instance_values[model_attr[0]] = [to_be_instance_values[model_attr[0]],
                                                                             model_attr[1].convert_to_python(o)]
                             continue
-                queryset.add(self.model_class(instance_uri, **to_be_instance_values))
+                queryset.add(self.model_class(instance_uri, create_mode=False, **to_be_instance_values))
         else:
             for key, val in kwargs.items():
                 filtered_attr: 'Field' = getattr(self.model_class, key)
@@ -420,7 +422,7 @@ WHERE {{
 
                         if is_match:
                             # Create the instance and add it to the queryset.
-                            queryset.add(self.model_class(instance_uri, **to_be_instance_values))
+                            queryset.add(self.model_class(instance_uri, create_mode=False, **to_be_instance_values))
 
         return queryset
 
@@ -495,10 +497,12 @@ class Model(metaclass=ModelBase):
         }
             
             
-    def __init__(self, uri: Optional[str], db_key: str = 'default', **kwargs):
+    def __init__(self, uri: Optional[str], db_key: str = 'default', create_mode: bool = True, **kwargs):
         cls = self.__class__
         db = Database.get_db(db_key)
         # self.__objects__ = Query(cls)  # I don't think this is used anywhere?
+
+        self.__changed_attributes__ = set()
 
         if not uri:
             if getattr(self, '__mint__', None) is not None:
@@ -512,8 +516,7 @@ class Model(metaclass=ModelBase):
                 self.__uri__ = URIRef(uri)
 
         self.__attributes__ = self.get_model_attributes(self)
-        self.__changed_attributes__ = set()
-
+        
         # try:
         for attribute_name, attribute_field in self.__attributes__:
             if kwargs.get(attribute_name) is not None:
@@ -533,6 +536,10 @@ class Model(metaclass=ModelBase):
         #     logger.error(traceback.print_exc())
         #     logger.error(str(e))
         #     raise Exception(f'Failed creating {cls} instance with identifier {self.__uri__}')
+
+        # If we're not in create mode, we're in update mode, so we need to track changes.
+        if not create_mode:
+            self.__changed_attributes__ = set()
 
     def __setattr__(self, name, value):
         if name in [x[0] for x in self.__dict__.get('__attributes__', [])]:
@@ -568,9 +575,15 @@ class Model(metaclass=ModelBase):
     def delete(self, db_key: str = 'default'):
         uri = self.__uri__
         db = Database.get_db(db_key)
-        for s, p, o in db.read((uri, None, None)):
-            db.delete((s, p, o))
-
+        try:
+            for s, p, o in db.read((uri, None, None)):
+                db.delete((s, p, o))
+        except Exception as e:
+            # If an error occurs, log it and re-raise
+            logger.error(f"Error occurred while deleting {cls} instance with URI {uri}")
+            logger.error(traceback.format_exc())
+            raise e
+        
     def save(self, db_key: str = 'default'):
         uri = self.__uri__
         cls = self.__class__
